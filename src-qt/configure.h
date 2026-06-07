@@ -3,14 +3,16 @@
 
 #include <QString>
 
+#include <atomic>
+
 struct option
 {
-    unsigned int proc = 0;      // количество потоков
-    int  mode         = 1;      // режим майнинга
-    int  high         = 20;     // начальная высота при майнинге: dec(20) == hex(14)
-    bool letsup       = true;   // повышение высоты при нахождении
+    unsigned int proc = 0;       // количество потоков
+    int  mode         = 1;       // режим майнинга
+    std::atomic<int> high {20};  // высота: читается и повышается майнинг-потоками
+    bool letsup       = true;    // повышение высоты при нахождении
     QString str       = "aaaa";
-    bool stop         = false;  // флаг остановки
+    std::atomic<bool> stop {false}; // флаг остановки: пишет GUI-поток, читают майнеры
 
     QString outputfile;
 };

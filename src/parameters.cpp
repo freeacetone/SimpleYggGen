@@ -1,32 +1,29 @@
-﻿#include "parametes.h"
+#include "parameters.h"
 
 int parameters(option& conf, std::string arg)
 {
-    if (arg.find(" ") != std::string::npos) // Строка с пробелом, значит, ключ_значение
+    const size_t spacePos = arg.find(' ');
+    if (spacePos != std::string::npos) // Строка с пробелом, значит, ключ_значение
     {
-        const size_t npos = -1; // std::string::npos с блэкджэком и путанами
+        const std::string key = arg.substr(0, spacePos);
+        std::istringstream ss( arg.substr(spacePos+1) ); // Поток нужен для проверки корректности и конвертации
 
-        int position = arg.find(" ");
-        std::istringstream ss( arg.substr(position+1) ); // Поток нужен для проверки корректности и конвертации
-
-        if (arg.find("--threads") != npos || arg.find("-t") != npos) {
+        if (key == "--threads" || key == "-t") {
             ss >> conf.proc;
-            if (ss.fail()) return 1;
-            return 0;
+            return ss.fail() ? 1 : 0;
         }
-        if (arg.find("--pattern") != npos || arg.find("-p") != npos) {
+        if (key == "--pattern" || key == "-p") {
             ss >> conf.str;
-            if (ss.fail()) return 1;
-            return 0;
+            return ss.fail() ? 1 : 0;
         }
-        if (arg.find("--altitude") != npos || arg.find("-a") != npos) {
+        if (key == "--altitude" || key == "-a") {
             ss >> std::hex >> conf.high;
-            if (ss.fail()) return 1;
-            return 0;
+            return ss.fail() ? 1 : 0;
         }
+        return 1;
     }
 
-    else if (arg == "--ip"           || arg == "-i" ) conf.mode = 0;
+    if      (arg == "--ip"           || arg == "-i" ) conf.mode = 0;
     else if (arg == "--ip-high"      || arg == "-ih") conf.mode = 2;
     else if (arg == "--regexp"       || arg == "-r" ) conf.mode = 3;
     else if (arg == "--regexp-high"  || arg == "-rh") conf.mode = 4;
@@ -42,6 +39,8 @@ int parameters(option& conf, std::string arg)
     else if (arg == "--threads"  || arg == "-t") return 777; // Параметры, требующие значение
     else if (arg == "--pattern"  || arg == "-p") return 777;
     else if (arg == "--altitude" || arg == "-a") return 777;
+
+    else return 778; // Неизвестный параметр
 
     return 0;
 }

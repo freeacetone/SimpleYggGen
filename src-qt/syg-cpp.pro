@@ -7,11 +7,14 @@ CONFIG += c++11
 DEFINES += QT_DEPRECATED_WARNINGS
 
 SOURCES += \
+    ../src/core.cpp \
     main.cpp \
     miner.cpp \
     widget.cpp
 
 HEADERS += \
+    ../src/core.h \
+    ../src/version.h \
     configure.h \
     miner.h \
     widget.h \

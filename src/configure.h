@@ -1,10 +1,9 @@
-﻿#ifndef CONFIGURE_H
+#ifndef CONFIGURE_H
 #define CONFIGURE_H
 
 #include <string>
-#include "main.h"
 
-struct option 
+struct option
 {
     unsigned int proc = 0;      // количество потоков
     int  mode         = 1;      // режим майнинга
@@ -17,7 +16,6 @@ struct option
 
     std::string outputfile;
     int sbt_size   = 7;         // 64b/8 = 8B, нумерация с нуля
-    bool sbt_alarm = false;     // для симпатичного вывода предупреждения
 };
 
 #endif

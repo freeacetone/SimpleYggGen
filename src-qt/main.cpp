@@ -5,16 +5,24 @@
  */
 
 #include "widget.h"
+#include "../src/core.h"
+#include "../src/version.h"
 
-#include <fstream>
+#include <iostream>
 #include <QApplication>
 #include <QString>
 #include <QIcon>
 
-const QString PRODUCT_VERSION = "5.2 forkup";
+const QString PRODUCT_VERSION = SYG_VERSION;
 
 int main(int argc, char *argv[])
 {
+    if (!initSodium())
+    {
+        std::cerr << "FATAL: libsodium initialization failed" << std::endl;
+        return 1;
+    }
+
     QApplication a(argc, argv);
     Widget w;
     w.setWindowTitle("syg-cpp " + PRODUCT_VERSION + " (Qt)");

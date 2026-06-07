@@ -1,24 +1,46 @@
 #include "miner.h"
 #include "configure.h"
-#include "../src/cppcodec/base32_rfc4648.hpp"
 
 #include <QFile>
 #include <QDebug>
+#include <QElapsedTimer>
+#include <QMutexLocker>
 #include <QRegularExpression>
+#include <QThread>
 
 #include <iomanip>
-#include <iostream>
 #include <sstream>
-#include <sodium.h>
+
+#ifdef Q_OS_LINUX
+    // QThread::setPriority не работает для SCHED_OTHER на Linux,
+    // поэтому приоритет майнинг-потоков понижается через nice
+    #include <sys/resource.h>
+    #include <sys/syscall.h>
+    #include <unistd.h>
+#endif
 
 QMutex Miner::m_mtx;
 std::time_t Miner::m_sygstartedin = std::time(NULL);
 int Miner::m_countsize = 0;
 std::atomic<quint64> Miner::m_totalcount (0);
 std::atomic<quint64> Miner::m_countfortune (0);
-std::chrono::steady_clock::duration Miner::m_blocks_duration;
+std::atomic<qint64> Miner::m_blocksDurationNs (0);
 
 Miner::Miner(Widget *w): window(w)
+{
+    QObject::connect(this, &Miner::setLog, window, &Widget::setLog, Qt::QueuedConnection);
+    QObject::connect(this, &Miner::setAddr, window, &Widget::setAddr, Qt::QueuedConnection);
+}
+
+void Miner::dropCounters()
+{
+    m_sygstartedin = std::time(NULL);
+    m_totalcount = 0;
+    m_countfortune = 0;
+    m_blocksDurationNs = 0;
+}
+
+void Miner::configure(Widget* window)
 {
     m_countsize = 30000 * window->conf.proc; // Периодичность обновления счетчиков
 
@@ -30,56 +52,43 @@ Miner::Miner(Widget *w): window(w)
     window->conf.mode == 5 ? window->conf.outputfile = "syg-meshname-pattern.txt" :
         /* 6 */      window->conf.outputfile = "syg-meshname-regexp.txt" ;
 
-    initializeLogFile();
+    initializeLogFile(window);
 
     if (window->conf.mode == 6)
     {
         // поиск по сырому base32, где конец - это паддинг "====".
-        for (auto it = window->conf.str.begin(); it != window->conf.str.end(); ++it)
-        {
-            if (*it == '$') *it = '=';
-        }
+        window->conf.str.replace('$', '=');
     }
 
     if (window->conf.mode == 5) // meshname pattern
     {
-        window->conf.str = pickupStringForMeshname(window->conf.str);
+        window->conf.str = QString::fromStdString(
+            pickupStringForMeshname(window->conf.str.toStdString()));
     }
-
-    QObject::connect(this, &Miner::setLog, window, &Widget::setLog, Qt::QueuedConnection);
-    QObject::connect(this, &Miner::setAddr, window, &Widget::setAddr, Qt::QueuedConnection);
 }
 
-void Miner::dropCounters()
-{
-    m_sygstartedin = std::time(NULL);
-    m_countsize = 0;
-    m_totalcount = 0;
-    m_countfortune = 0;
-    m_blocks_duration = std::chrono::steady_clock::duration::zero();
-}
-
-void Miner::initializeLogFile()
+void Miner::initializeLogFile(Widget* window)
 {
     QFile output(window->conf.outputfile);
-    if (output.exists())
+    if (not output.exists())
     {
-        return;
+        if (not output.open(QIODevice::WriteOnly))
+        {
+            qDebug() << __PRETTY_FUNCTION__ << "can't initialize output file";
+            return;
+        }
+
+        output.write("******************************************************\n"
+                     "Change PublicKey and PrivateKey to your yggdrasil.conf\n"
+                     "Windows: C:\\ProgramData\\Yggdrasil\\yggdrasil.conf\n"
+                     "Debian: /etc/yggdrasil.conf\n"
+                     "******************************************************\n");
+
+        output.close();
     }
 
-    if (not output.open(QIODevice::WriteOnly))
-    {
-        qDebug() << __PRETTY_FUNCTION__ << "can't initialize output file";
-        return;
-    }
-
-    output.write("******************************************************\n"
-                 "Change PublicKey and PrivateKey to your yggdrasil.conf\n"
-                 "Windows: C:\\ProgramData\\Yggdrasil\\yggdrasil.conf\n"
-                 "Debian: /etc/yggdrasil.conf\n"
-                 "******************************************************\n");
-
-    output.close();
+    // файл содержит приватные ключи - ограничиваем доступ владельцем
+    output.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
 }
 
 void Miner::logStatistics()
@@ -91,9 +100,8 @@ void Miner::logStatistics()
         auto timeminutes = ((std::time(NULL) - m_sygstartedin) - (timedays * 86400) - (timehours * 3600)) / 60;
         auto timeseconds = (std::time(NULL) - m_sygstartedin) - (timedays * 86400) - (timehours * 3600) - (timeminutes * 60);
 
-        std::chrono::duration<double, std::milli> df = m_blocks_duration;
-        m_blocks_duration = std::chrono::steady_clock::duration::zero();
-        quint64 khs = window->conf.proc * m_countsize / df.count();
+        const double block_ms = m_blocksDurationNs.exchange(0) / 1.0e6;
+        const quint64 khs = block_ms > 0 ? window->conf.proc * m_countsize / block_ms : 0;
 
         std::stringstream ss;
         ss << std::setw(2) << std::setfill('0') << timedays << ":" << std::setw(2) << std::setfill('0')
@@ -103,13 +111,22 @@ void Miner::logStatistics()
     }
 }
 
-void Miner::logKeys(const Address& raw, const KeysBox keys)
+void Miner::logKeys(const Address& raw, const KeysBox& keys)
 {
-    QString base32 = getBase32(raw);
-    if (window->conf.mode == 5 || window->conf.mode == 6) emit setAddr(pickupMeshnameForOutput(base32));
-    else                                  emit setAddr(getAddress(raw));
+    const bool mesh = (window->conf.mode == 5 || window->conf.mode == 6);
+    const QString domain = QString::fromStdString(pickupMeshnameForOutput(getBase32(raw)));
+    const QString address = QString::fromStdString(getAddress(raw));
 
-    m_mtx.lock();
+    QMutexLocker locker(&m_mtx); // отпускает мьютекс на любом выходе из функции
+
+    // При потоке находок (короткий паттерн) GUI обновляется не чаще раза в 100 мс,
+    // чтобы очередь событий не подвешивала интерфейс; файл получает все ключи
+    static QElapsedTimer addrTimer;
+    if (not addrTimer.isValid() || addrTimer.elapsed() > 100)
+    {
+        emit setAddr(mesh ? domain : address);
+        addrTimer.restart();
+    }
 
     QFile output(window->conf.outputfile);
     if (not output.open(QIODevice::WriteOnly | QIODevice::Append))
@@ -118,140 +135,33 @@ void Miner::logKeys(const Address& raw, const KeysBox keys)
         return;
     }
 
-    const QByteArray publicKey = keyToString(keys.PublicKey).toUtf8();
-    const QByteArray data = "\n"
-    "Domain:     " + pickupMeshnameForOutput(base32).toUtf8() + "\n"
-    "Address:    " + getAddress(raw).toUtf8() + "\n"
-    "PublicKey:  " + publicKey + "\n"
-    "PrivateKey: " + keyToString(keys.PrivateKey).toUtf8() + publicKey + "\n";
+    const QByteArray publicKey = QByteArray::fromStdString(keyToString(keys.PublicKey));
+    QByteArray data = "\n";
+    if (mesh)
+        data += "Domain:     " + domain.toUtf8() + "\n";
+    data += "Address:    " + address.toUtf8() + "\n"
+            "PublicKey:  " + publicKey + "\n"
+            "PrivateKey: " + QByteArray::fromStdString(keyToString(keys.PrivateKey)) + publicKey + "\n";
 
     output.write(data);
     output.close();
-
-    m_mtx.unlock();
-}
-
-QString Miner::getBase32(const Address& rawAddr)
-{
-    return QString::fromStdString(cppcodec::base32_rfc4648::encode(rawAddr.data(), 16));
-}
-
-/**
- * pickupStringForMeshname получает человекочитаемую строку
- * типа fsdasdaklasdgdas.meship и возвращает значение, пригодное
- * для поиска по meshname-строке: удаляет возможную доменную зону
- * (всё после точки и саму точку), а также делает все буквы
- * заглавными.
- */
-QString Miner::pickupStringForMeshname(QString str)
-{
-    str = str.toUpper();
-    qsizetype dotPos = str.indexOf('.');
-    if (dotPos >= 0)
-    {
-        str.remove(dotPos, str.size()-dotPos);
-    }
-    return str;
-}
-
-/**
- * pickupMeshnameForOutput получает сырое base32 значение
- * типа KLASJFHASSA7979====== и возвращает meshname-домен:
- * делает все символы строчными и удаляет паддинги ('='),
- * а также добавляет доменную зону ".meship".
- */
-QString Miner::pickupMeshnameForOutput(QString str)
-{
-    str = str.toLower();
-    str.remove('=');
-    return str + ".meship";
-}
-
-QString Miner::keyToString(const Key& key)
-{
-    return hexArrayToString(key.data(), KEYSIZE);
-}
-
-QString Miner::hexArrayToString(const uint8_t* bytes, int length)
-{
-    std::stringstream ss;
-    for (int i = 0; i < length; i++)
-    {
-        ss << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(bytes[i]);
-    }
-    return QString::fromStdString(ss.str());
-}
-
-QString Miner::getAddress(const Address& rawAddr)
-{
-    char ipStrBuf[46];
-    inet_ntop(AF_INET6, rawAddr.data(), ipStrBuf, 46);
-    return ipStrBuf;
-}
-
-KeysBox Miner::getKeyPair()
-{
-    KeysBox keys;
-
-    uint8_t sk[64];
-    crypto_sign_ed25519_keypair(keys.PublicKey.data(), sk);
-    memcpy(keys.PrivateKey.data(), sk, 32);
-
-    return keys;
-}
-
-void Miner::getRawAddress(int lErase, Key InvertedPublicKey, Address& rawAddr)
-{
-    ++lErase; // лидирующие единицы + первый ноль
-
-    int bitsToShift = lErase % 8;
-    int start = lErase / 8;
-
-    for(int i = start; i < start + 15; ++i)
-    {
-        InvertedPublicKey[i] <<= bitsToShift;
-        InvertedPublicKey[i] |= (InvertedPublicKey[i + 1] >> (8 - bitsToShift));
-    }
-
-    rawAddr[0] = 0x02;
-    rawAddr[1] = lErase - 1;
-    for (int i = 0; i < 14; ++i)
-    {
-        rawAddr[i + 2] = InvertedPublicKey[i+start];
-    }
-}
-
-Key Miner::bitwiseInverse(const Key& key)
-{
-    Key inverted;
-    for(size_t i = 0; i < key.size(); ++i)
-    {
-        inverted[i] = ~key[i];
-    }
-
-    return inverted;
-}
-
-int Miner::getOnes(const Key& value)
-{
-    const int zeroBytesMap[8] = {0x80,0x40,0x20,0x10,0x08,0x04,0x02,0x01};
-    int leadOnes = 0; // кол-во лидирующих единиц
-
-    for (int i = 0; i < 17; ++i) // 32B(ключ) - 15B(IPv6 без 0x02) = 17B(возможных лидирующих единиц)
-    {
-        for (int j = 0; j < 8; ++j)
-        {
-            if (value[i] & zeroBytesMap[j]) ++leadOnes;
-            else return leadOnes;
-        }
-    }
-    return 0; // никогда не случится
 }
 
 void Miner::run()
 {
-    Address rawAddr;
-    const QRegularExpression regx(window->conf.str);
+    // Понижаем приоритет майнинг-потока, чтобы GUI оставался отзывчивым:
+    // setPriority работает на Windows, nice - на Linux
+    QThread::currentThread()->setPriority(QThread::LowPriority);
+#ifdef Q_OS_LINUX
+    setpriority(PRIO_PROCESS, static_cast<id_t>(syscall(SYS_gettid)), 5);
+#endif
+
+    const int mode = window->conf.mode;
+    const std::string pattern = window->conf.str.toStdString();
+    const QRegularExpression regx = (mode == 3 || mode == 4 || mode == 6)
+        ? QRegularExpression(window->conf.str) : QRegularExpression();
+
+    Address rawAddr {};
     int ones = 0;
 
     for (;;) // основной цикл майнинга
@@ -263,15 +173,15 @@ void Miner::run()
         Key invKey = bitwiseInverse(keys.PublicKey);
         ones = getOnes(invKey);
 
-        if (window->conf.mode == 0) // IPv6 pattern mining
+        if (mode == 0) // IPv6 pattern mining
         {
             getRawAddress(ones, invKey, rawAddr);
-            if (getAddress(rawAddr).contains(window->conf.str))
+            if (getAddress(rawAddr).find(pattern) != std::string::npos)
             {
                 processFortuneKey(keys);
             }
         }
-        if (window->conf.mode == 1) // high mining
+        if (mode == 1) // high mining
         {
             if (ones > window->conf.high)
             {
@@ -279,44 +189,44 @@ void Miner::run()
                 processFortuneKey(keys);
             }
         }
-        if (window->conf.mode == 2) // pattern & high mining
+        if (mode == 2) // pattern & high mining
         {
             getRawAddress(ones, invKey, rawAddr);
-            if (ones > window->conf.high and getAddress(rawAddr).contains(window->conf.str))
+            if (ones > window->conf.high and getAddress(rawAddr).find(pattern) != std::string::npos)
             {
                 if (window->conf.letsup) window->conf.high = ones;
                 processFortuneKey(keys);
             }
         }
-        if (window->conf.mode == 3) // IPv6 regexp mining
+        if (mode == 3) // IPv6 regexp mining
         {
             getRawAddress(ones, invKey, rawAddr);
-            if (getAddress(rawAddr).contains(regx))
+            if (QString::fromStdString(getAddress(rawAddr)).contains(regx))
             {
                 processFortuneKey(keys);
             }
         }
-        if (window->conf.mode == 4) // IPv6 regexp & high mining
+        if (mode == 4) // IPv6 regexp & high mining
         {
             getRawAddress(ones, invKey, rawAddr);
-            if (ones > window->conf.high and getAddress(rawAddr).contains(regx))
+            if (ones > window->conf.high and QString::fromStdString(getAddress(rawAddr)).contains(regx))
             {
                 if (window->conf.letsup) window->conf.high = ones;
                 processFortuneKey(keys);
             }
         }
-        if (window->conf.mode == 5) // meshname pattern mining
+        if (mode == 5) // meshname pattern mining
         {
             getRawAddress(ones, invKey, rawAddr);
-            if (getBase32(rawAddr).contains(window->conf.str))
+            if (getBase32(rawAddr).find(pattern) != std::string::npos)
             {
                 processFortuneKey(keys);
             }
         }
-        if (window->conf.mode == 6) // meshname regexp mining
+        if (mode == 6) // meshname regexp mining
         {
             getRawAddress(ones, invKey, rawAddr);
-            if (getBase32(rawAddr).contains(regx))
+            if (QString::fromStdString(getBase32(rawAddr)).contains(regx))
             {
                 processFortuneKey(keys);
             }
@@ -324,7 +234,7 @@ void Miner::run()
 
         auto stop_time = std::chrono::steady_clock::now();
         ++m_totalcount;
-        m_blocks_duration += stop_time - start_time;
+        m_blocksDurationNs += std::chrono::duration_cast<std::chrono::nanoseconds>(stop_time - start_time).count();
         logStatistics();
     }
 }

@@ -3,6 +3,7 @@
 #include "configure.h"
 #include "miner.h"
 
+#include <algorithm>
 #include <iomanip>
 #include <thread>
 #include <sstream>
@@ -17,7 +18,8 @@ Widget::Widget(QWidget *parent): QWidget(parent), ui(new Ui::Widget), m_tpool(ne
 {
     ui->setupUi(this);
 
-    const unsigned int processor_count = std::thread::hardware_concurrency();
+    const unsigned int processor_count = std::max(1u, std::thread::hardware_concurrency());
+    ui->threads->setMinimum(1);
     ui->threads->setMaximum(processor_count);
     ui->threads->setValue(processor_count);
 
@@ -59,6 +61,8 @@ Widget::Widget(QWidget *parent): QWidget(parent), ui(new Ui::Widget), m_tpool(ne
 
 void Widget::setLog(const QString tm, const quint64 tt, const quint64 f, const quint64 k)
 {
+    if (not m_isStarted) return; // игнорируем хвост очереди сигналов после остановки
+
     if (k > m_speedRecord)
     {
         m_speedRecord = k;
@@ -73,23 +77,20 @@ void Widget::setLog(const QString tm, const quint64 tt, const quint64 f, const q
 
 void Widget::setAddr(const QString address)
 {
+    if (not m_isStarted) return; // игнорируем хвост очереди сигналов после остановки
+
     ui->last->setText(address);
 }
 
 Widget::~Widget()
 {
-    if (not conf.stop)
-    {
-        conf.stop = true;
-        m_tpool->waitForDone(100);
-    }
-
+    // Дожидаемся майнеров до удаления ui: потоки читают conf и эмитят сигналы,
+    // ограниченное ожидание оставляло бы им висячие указатели
+    conf.stop = true;
+    m_tpool->clear();
+    m_tpool->waitForDone(); // потоки проверяют stop на каждой итерации
+    delete m_tpool;
     delete ui;
-    if (m_tpool)
-    {
-        m_tpool->clear();
-        m_tpool->deleteLater();
-    }
 }
 
 QString Widget::numToReadableString(const quint64 num)
@@ -199,6 +200,9 @@ void Widget::action()
         return;
     }
 
+    m_isStarted = true;
+    ui->action->setText("STOP");
+
     ui->stackedWidget->setCurrentIndex(1);
     ui->last->setText("<last address will be here>");
     ui->hs->setText("Maximum speed: 0 kH/s");
@@ -212,11 +216,10 @@ void Widget::action()
     conf.letsup = !ui->disableIncrease->isChecked();
     conf.stop   = false;
 
-    m_isStarted = true;
-    ui->action->setText("STOP");
-
     Miner::dropCounters();
+    Miner::configure(this); // подготовка файла и строки поиска - однократно
 
+    m_tpool->setMaxThreadCount(conf.proc);
     for (unsigned i = 0; i < conf.proc; i++)
     {
         auto miner = new Miner(this);

@@ -4,6 +4,7 @@ CONFIG -= app_bundle
 CONFIG -= qt
 
 SOURCES += \
+        core.cpp \
         main.cpp \
         parameters.cpp
 
@@ -19,6 +20,7 @@ QMAKE_CXXFLAGS += \
 
 HEADERS += \
         configure.h \
+        core.h \
         cppcodec/base32_rfc4648.hpp \
         cppcodec/data/access.hpp \
         cppcodec/data/raw_result_buffer.hpp \
@@ -28,4 +30,5 @@ HEADERS += \
         cppcodec/detail/stream_codec.hpp \
         cppcodec/parse_error.hpp \
         main.h \
-        parametes.h
+        parameters.h \
+        version.h

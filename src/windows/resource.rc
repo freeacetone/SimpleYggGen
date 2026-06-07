@@ -1,4 +1,5 @@
 #include <winresrc.h>
+#include "../version.h"
 
 #define MAINICON 101
 
@@ -8,8 +9,8 @@ LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
 MAINICON ICON "syg-icon.ico"
 
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION 5,1,0
-PRODUCTVERSION 5,1,0
+FILEVERSION SYG_VERSION_MAJOR,SYG_VERSION_MINOR,SYG_VERSION_PATCH
+PRODUCTVERSION SYG_VERSION_MAJOR,SYG_VERSION_MINOR,SYG_VERSION_PATCH
 
 FILEOS 0x40004L
 FILETYPE 0x1L
@@ -22,11 +23,11 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "acetone"
             VALUE "FileDescription", "Simple Yggdrasil address miner"
-            VALUE "FileVersion", "5.1.0"
+            VALUE "FileVersion", SYG_VERSION
             VALUE "LegalCopyright", "(c) GPLv3"
             VALUE "OriginalFilename", "sygcpp"
             VALUE "ProductName", "SimpleYggGen"
-            VALUE "ProductVersion", "5.1.0-flow"
+            VALUE "ProductVersion", SYG_VERSION
         END
     END
     BLOCK "VarFileInfo"

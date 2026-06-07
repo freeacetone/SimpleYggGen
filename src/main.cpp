@@ -1,5 +1,5 @@
 /*
- * Address miner for Yggdrsail Network 0.4.x and higher.
+ * Address miner for Yggdrasil Network 0.4.x and higher.
  *
  * developers: Vort, acetone, R4SAS, lialh4, filarius, orignal
  * developers team, 2021 (c) GPLv3
@@ -7,26 +7,38 @@
  */
 
 #include "main.h"
+#include "version.h"
+
+#ifndef _WIN32
+    #include <sys/stat.h> // chmod: файл лога содержит приватные ключи
+#endif
 
 std::time_t sygstartedin = std::time(NULL); // для вывода времени работы
 int countsize = 0;                          // определяет периодичность вывода счетчика
-uint64_t totalcount = 0;                    // общий счетчик
-uint64_t countfortune = 0;                  // счетчик нахождений
+std::atomic<uint64_t> totalcount(0);        // общий счетчик
+std::atomic<uint64_t> countfortune(0);      // счетчик нахождений
+std::atomic<int64_t> blocks_duration_ns(0); // суммарная длительность блоков, нс
+std::atomic<int> altitude(20);              // текущая высота, общая для потоков
 bool newline = false;                       // форматирует вывод после нахождения адреса
-std::chrono::steady_clock::duration blocks_duration(0);
 std::mutex mtx;
 static option conf;
 
 void intro()
 {
-    std::cout << std::endl << "\
- +--------------------------------------------------------------------------+ \n\
- |                   [    SimpleYggGen C++  5.1-flow    ]                   | \n\
- |                   EdDSA public key -> IPv6 -> Meshname                   | \n\
- |                   notabug.org/acetone/SimpleYggGen-CPP                   | \n\
- |                                                                          | \n\
- |                              GPLv3 (c) 2021                              | \n\
- +--------------------------------------------------------------------------+ "
+    // строка версии центрируется, чтобы рамка не разъезжалась при смене version.h
+    const std::string title = "[    SimpleYggGen C++  " SYG_VERSION "    ]";
+    const size_t width = 74; // внутренняя ширина рамки
+    const size_t left = (width - title.size()) / 2;
+    const size_t right = width - title.size() - left;
+
+    std::cout << std::endl <<
+ " +--------------------------------------------------------------------------+ \n"
+ " |" << std::string(left, ' ') << title << std::string(right, ' ') << "| \n"
+ " |                   EdDSA public key -> IPv6 -> Meshname                   | \n"
+ " |                   notabug.org/acetone/SimpleYggGen-CPP                   | \n"
+ " |                                                                          | \n"
+ " |                              GPLv3 (c) 2021                              | \n"
+ " +--------------------------------------------------------------------------+ "
  << std::endl;
 }
 
@@ -38,6 +50,7 @@ void displayConfig()
         conf.proc = static_cast<unsigned int>(processor_count);
 
     countsize = 80000 * conf.proc;
+    altitude = conf.high; // стартовая высота для майнинг-потоков
 
     std::cout << " Threads: " << conf.proc << ", ";
 
@@ -82,38 +95,46 @@ void displayConfig()
 
 void testOutput()
 {
-    if(conf.log)
-    {
-        if(conf.mode == 0)
-            conf.outputfile = "syg-ipv6-pattern.txt";
-        else if(conf.mode == 1)
-            conf.outputfile = "syg-ipv6-high.txt";
-        else if(conf.mode == 2)
-            conf.outputfile = "syg-ipv6-pattern-high.txt";
-        else if(conf.mode == 3)
-            conf.outputfile = "syg-ipv6-regexp.txt";
-        else if(conf.mode == 4)
-            conf.outputfile = "syg-ipv6-regexp-high.txt";
-        else if(conf.mode == 5)
-            conf.outputfile = "syg-meshname-pattern.txt";
-        else if(conf.mode == 6)
-            conf.outputfile = "syg-meshname-regexp.txt";
-        else if(conf.mode == 7)
-            conf.outputfile = "syg-subnet-brute-force.txt";
+    if(!conf.log) return;
 
-        std::ifstream test(conf.outputfile);
-        if(!test)
-        {
-            test.close();
-            std::ofstream output(conf.outputfile);
-            output << "******************************************************\n"
-                   << "Change PublicKey and PrivateKey to your yggdrasil.conf\n"
-                   << "Windows: C:\\ProgramData\\Yggdrasil\\yggdrasil.conf\n"
-                   << "Debian: /etc/yggdrasil.conf\n"
-                   << "******************************************************\n";
-            output.close();
-        } else test.close();
+    if(conf.mode == 0)
+        conf.outputfile = "syg-ipv6-pattern.txt";
+    else if(conf.mode == 1)
+        conf.outputfile = "syg-ipv6-high.txt";
+    else if(conf.mode == 2)
+        conf.outputfile = "syg-ipv6-pattern-high.txt";
+    else if(conf.mode == 3)
+        conf.outputfile = "syg-ipv6-regexp.txt";
+    else if(conf.mode == 4)
+        conf.outputfile = "syg-ipv6-regexp-high.txt";
+    else if(conf.mode == 5)
+        conf.outputfile = "syg-meshname-pattern.txt";
+    else if(conf.mode == 6)
+        conf.outputfile = "syg-meshname-regexp.txt";
+    else if(conf.mode == 7)
+        conf.outputfile = "syg-subnet-brute-force.txt";
+
+    std::ifstream test(conf.outputfile);
+    const bool exists = static_cast<bool>(test);
+    test.close();
+
+    if(!exists)
+    {
+        std::ofstream output(conf.outputfile);
+        output << "******************************************************\n"
+               << "Change PublicKey and PrivateKey to your yggdrasil.conf\n"
+               << "Windows: C:\\ProgramData\\Yggdrasil\\yggdrasil.conf\n"
+               << "Debian: /etc/yggdrasil.conf\n"
+               << "******************************************************\n";
+        if (!output.good())
+            std::cerr << " WARNING: can't create log file \"" << conf.outputfile
+                      << "\", found keys will be printed to console in full format" << std::endl << std::endl;
+        output.close();
     }
+
+#ifndef _WIN32
+    chmod(conf.outputfile.c_str(), S_IRUSR | S_IWUSR); // 0600: в файле приватные ключи
+#endif
 }
 
 void logStatistics()
@@ -126,13 +147,14 @@ void logStatistics()
         auto timeminutes = ((std::time(NULL) - sygstartedin) - (timedays * 86400) - (timehours * 3600)) / 60;
         auto timeseconds = (std::time(NULL) - sygstartedin) - (timedays * 86400) - (timehours * 3600) - (timeminutes * 60);
 
-        std::chrono::duration<double, std::milli> df = blocks_duration;
-        blocks_duration = std::chrono::steady_clock::duration::zero();
-        uint64_t khs = conf.proc * countsize / df.count();
+        const double block_ms = blocks_duration_ns.exchange(0) / 1.0e6;
+        const uint64_t khs = block_ms > 0 ? conf.proc * countsize / block_ms : 0;
+        const uint64_t total = totalcount;
+        const uint64_t found = countfortune;
         std::cout <<
             " kH/s: [" << std::setw(7) << std::setfill('_') << khs <<
-            "] Total: [" << std::setw(19) << totalcount <<
-            "] Found: [" << std::setw(3) << countfortune <<
+            "] Total: [" << std::setw(19) << total <<
+            "] Found: [" << std::setw(3) << found <<
             "] Time: [" << timedays << ":" << std::setw(2) << std::setfill('0') <<
             timehours << ":" << std::setw(2) << timeminutes << ":" << std::setw(2) << timeseconds << "]" << std::endl;
         newline = true;
@@ -143,187 +165,55 @@ void logStatistics()
 void logKeys(const Address& raw, const KeysBox& keys)
 {
     mtx.lock();
+
+    bool logged = false;
+    if (conf.log) // запись в файл
+    {
+        std::ofstream output(conf.outputfile, std::ios::app);
+        if (output)
+        {
+            output << std::endl;
+            if (conf.mesh)
+                output << "Domain:     " << pickupMeshnameForOutput(getBase32(raw)) << std::endl;
+            output << "Address:    " << getAddress(raw) << std::endl;
+            output << "PublicKey:  " << keyToString(keys.PublicKey) << std::endl;
+            output << "PrivateKey: " << keyToString(keys.PrivateKey) << keyToString(keys.PublicKey) << std::endl;
+            logged = output.good();
+        }
+    }
+
     if(newline) // добавляем пустую строку на экране между счетчиком и новым адресом
     {
         std::cout << std::endl;
         newline = false;
     }
-    if (conf.mesh) {
-        std::string base32 = getBase32(raw);
-        std::cout << " Domain:     " << pickupMeshnameForOutput(base32) << std::endl;
-    }
+    if (conf.mesh)
+        std::cout << " Domain:     " << pickupMeshnameForOutput(getBase32(raw)) << std::endl;
     std::cout << " Address:    " << getAddress(raw) << std::endl;
     std::cout << " PublicKey:  " << keyToString(keys.PublicKey) << std::endl;
     std::cout << " PrivateKey: " << keyToString(keys.PrivateKey);
 
-    // Можем выводить приватный ключ в консоль в полном формате
-    if (!conf.log || conf.fullkeys) std::cout << keyToString(keys.PublicKey);
+    // Полный формат приватного ключа (seed + публичный, как в yggdrasil.conf) выводится
+    // в консоль по запросу --full-pk, а также если ключ не удалось сохранить в файл
+    if (!logged || conf.fullkeys) std::cout << keyToString(keys.PublicKey);
+    std::cout << std::endl;
 
-    std::cout << std::endl << std::endl;
+    if (conf.log && !logged)
+        std::cerr << " WARNING: can't write to \"" << conf.outputfile
+                  << "\", the key above is printed in full format" << std::endl;
 
-    if (conf.log) // запись в файл
-    {
-        std::ofstream output(conf.outputfile, std::ios::app);
-        output << std::endl;
-        if (conf.mesh) {
-            std::string base32 = getBase32(raw);
-            output << "Domain:     " << pickupMeshnameForOutput(base32) << std::endl;
-        }
-        output << "Address:    " << getAddress(raw) << std::endl;
-        output << "PublicKey:  " << keyToString(keys.PublicKey) << std::endl;
-        output << "PrivateKey: " << keyToString(keys.PrivateKey) << keyToString(keys.PublicKey) << std::endl;
-        output.close();
-    }
+    std::cout << std::endl;
     mtx.unlock();
-}
-
-std::string getBase32(const Address& rawAddr)
-{
-    return static_cast<std::string>(cppcodec::base32_rfc4648::encode(rawAddr.data(), 16));
-}
-
-/**
- * pickupStringForMeshname получает человекочитаемую строку
- * типа fsdasdaklasdgdas.meship и возвращает значение, пригодное
- * для поиска по meshname-строке: удаляет возможную доменную зону
- * (всё после точки и саму точку), а также делает все буквы
- * заглавными.
- */
-std::string pickupStringForMeshname(std::string str)
-{
-    bool dot = false;
-    std::string::iterator delend;
-    for (auto it = str.begin(); it != str.end(); it++)
-    {
-        *it = toupper(*it); // делаем все буквы заглавными для обработки
-        if(*it == '.') {
-            delend = it;
-            dot = true;
-        }
-    }
-    if (dot)
-        for (auto it = str.end(); it != delend; it--)
-            str.pop_back(); // удаляем доменную зону
-    return str;
-}
-
-/**
- * pickupMeshnameForOutput получает сырое base32 значение
- * типа KLASJFHASSA7979====== и возвращает meshname-домен:
- * делает все символы строчными и удаляет паддинги ('='),
- * а также добавляет доменную зону ".meship".
- */
-std::string pickupMeshnameForOutput(std::string str)
-{
-    for (auto it = str.begin(); it != str.end(); it++) // делаем все буквы строчными для вывода
-        *it = tolower(*it);
-    for (auto it = str.end(); *(it-1) == '='; it--)
-        str.pop_back(); // удаляем символы '=' в конце адреса
-    return str + ".meship";
-}
-
-/**
- * decodeMeshToIP получает строковое значение сырого base32
- * кода типа KLASJFHASSA7979====== и возвращает IPv6-стринг.
- */
-std::string decodeMeshToIP(const std::string& str)
-{
-    std::string mesh = pickupStringForMeshname(str) + "======"; // 6 паддингов - норма для IPv6 адреса
-    std::vector<uint8_t> raw = cppcodec::base32_rfc4648::decode(mesh);
-    Address rawAddr;
-    for(int i = 0; i < 16; ++i)
-        rawAddr[i] = raw[i];
-    return std::string(getAddress(rawAddr));
 }
 
 bool subnetCheck() // замена 300::/64 на целевой 200::/7
 {
-    if(conf.str[0] == '3')
+    if(!conf.str.empty() && conf.str[0] == '3')
     {
         conf.str[0] = '2';
         return true;
     }
     return false;
-}
-
-bool convertStrToRaw(const std::string& str, Address& array)
-{
-    return inet_pton(AF_INET6, str.c_str(), (void*)array.data());
-}
-
-KeysBox getKeyPair()
-{
-    KeysBox keys;
-
-    uint8_t sk[64];
-    crypto_sign_ed25519_keypair(keys.PublicKey.data(), sk);
-    memcpy(keys.PrivateKey.data(), sk, 32);
-
-    return keys;
-}
-
-void getRawAddress(int lErase, Key InvertedPublicKey, Address& rawAddr)
-{
-    ++lErase; // лидирующие единицы + первый ноль
-
-    int bitsToShift = lErase % 8;
-    int start = lErase / 8;
-
-    for(int i = start; i < start + 15; ++i)
-    {
-        InvertedPublicKey[i] <<= bitsToShift;
-        InvertedPublicKey[i] |= (InvertedPublicKey[i + 1] >> (8 - bitsToShift));
-    }
-
-    rawAddr[0] = 0x02;
-    rawAddr[1] = lErase - 1;
-    for (int i = 0; i < 14; ++i)
-        rawAddr[i + 2] = InvertedPublicKey[i+start];
-}
-
-Key bitwiseInverse(const Key& key)
-{
-    Key inverted;
-    for(size_t i = 0; i < key.size(); ++i)
-        inverted[i] = ~key[i];
-
-    return inverted;
-}
-
-int getOnes(const Key& value)
-{
-    const int zeroBytesMap[8] = {0x80,0x40,0x20,0x10,0x08,0x04,0x02,0x01};
-    int leadOnes = 0; // кол-во лидирующих единиц
-
-    for (int i = 0; i < 17; ++i) // 32B(ключ) - 15B(IPv6 без 0x02) = 17B(возможных лидирующих единиц)
-    {
-        for (int j = 0; j < 8; ++j)
-        {
-            if (value[i] & zeroBytesMap[j]) ++leadOnes;
-            else return leadOnes;
-        }
-    }
-    return 0; // никогда не случится
-}
-
-std::string getAddress(const Address& rawAddr)
-{
-    char ipStrBuf[46];
-    inet_ntop(AF_INET6, rawAddr.data(), ipStrBuf, 46);
-    return std::string(ipStrBuf);
-}
-
-std::string hexArrayToString(const uint8_t* bytes, int length)
-{
-    std::stringstream ss;
-    for (int i = 0; i < length; i++)
-        ss << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(bytes[i]);
-    return ss.str();
-}
-
-std::string keyToString(const Key& key)
-{
-    return hexArrayToString(key.data(), KEYSIZE);
 }
 
 void process_fortune_key(const KeysBox& keys)
@@ -332,38 +222,21 @@ void process_fortune_key(const KeysBox& keys)
     int ones = getOnes(invKey);
     Address rawAddr;
     getRawAddress(ones, invKey, rawAddr);
-    logKeys(rawAddr, keys);
     ++countfortune;
+    logKeys(rawAddr, keys);
 }
 
 template <int T>
 void miner_thread()
 {
-    if (T == 5) // meshname pattern
-    {
-        conf.str = pickupStringForMeshname(conf.str);
-    }
-    Address rawForBrute;
-    if (T == 7) // subnet brute force
-    {
-        mtx.lock();
-        std::string oldString = conf.str;
-        bool edited = subnetCheck();
-        bool result = convertStrToRaw(conf.str, rawForBrute);
-        if (!result || edited || conf.str != getAddress(rawForBrute))
-        {
-            if (!conf.sbt_alarm) // однократный вывод ошибки
-            {
-                std::cerr << " WARNING: Your string [" << oldString << "] converted to IP [" <<
-                getAddress(rawForBrute) << "]" << std::endl << std::endl;
-            }
-            conf.sbt_alarm = true;
-        }
-        mtx.unlock();
-    }
+    Address rawForBrute {};
+    if (T == 7) // строка нормализована в startThreads() до запуска потоков
+        convertStrToRaw(conf.str, rawForBrute);
 
-    Address rawAddr;
-    std::regex regx(conf.str, std::regex_constants::egrep | std::regex_constants::icase);
+    Address rawAddr {};
+    std::regex regx; // проверена в main() до запуска потоков
+    if (T == 3 || T == 4 || T == 6)
+        regx = std::regex(conf.str, std::regex_constants::egrep | std::regex_constants::icase);
     int ones = 0;
 
     for (;;) // основной цикл майнинга
@@ -376,25 +249,25 @@ void miner_thread()
         if (T == 0) // IPv6 pattern mining
         {
             getRawAddress(ones, invKey, rawAddr);
-            if (getAddress(rawAddr).find(conf.str.c_str()) != std::string::npos)
+            if (getAddress(rawAddr).find(conf.str) != std::string::npos)
             {
                 process_fortune_key(keys);
             }
         }
         if (T == 1) // high mining
         {
-            if (ones > conf.high)
+            if (ones > altitude)
             {
-                if (conf.letsup != 0) conf.high = ones;
+                if (conf.letsup) altitude = ones;
                 process_fortune_key(keys);
             }
         }
         if (T == 2) // pattern & high mining
         {
             getRawAddress(ones, invKey, rawAddr);
-            if (ones > conf.high && getAddress(rawAddr).find(conf.str.c_str()) != std::string::npos)
+            if (ones > altitude && getAddress(rawAddr).find(conf.str) != std::string::npos)
             {
-                if (conf.letsup != 0) conf.high = ones;
+                if (conf.letsup) altitude = ones;
                 process_fortune_key(keys);
             }
         }
@@ -409,11 +282,11 @@ void miner_thread()
         if (T == 4) // IPv6 regexp & high mining
         {
             getRawAddress(ones, invKey, rawAddr);
-            if (ones > conf.high)
+            if (ones > altitude)
             {
                 if (std::regex_search((getAddress(rawAddr)), regx))
                 {
-                    if (conf.letsup != 0) conf.high = ones;
+                    if (conf.letsup) altitude = ones;
                     process_fortune_key(keys);
                 }
             }
@@ -421,7 +294,7 @@ void miner_thread()
         if (T == 5) // meshname pattern mining
         {
             getRawAddress(ones, invKey, rawAddr);
-            if (getBase32(rawAddr).find(conf.str.c_str()) != std::string::npos)
+            if (getBase32(rawAddr).find(conf.str) != std::string::npos)
             {
                 process_fortune_key(keys);
             }
@@ -437,11 +310,15 @@ void miner_thread()
         if (T == 7) // subnet brute force
         {
             getRawAddress(ones, invKey, rawAddr);
-            for(int z = 0; rawForBrute[z] == rawAddr[z]; ++z)
+            for(int z = 0; z < static_cast<int>(ADDRIPV6) && rawForBrute[z] == rawAddr[z]; ++z)
             {
                 if (z > 4)
                 {
-                    if (z == conf.sbt_size) process_fortune_key(keys);
+                    if (z == conf.sbt_size)
+                    {
+                        process_fortune_key(keys);
+                        break;
+                    }
                     else
                     {
                         mtx.lock();
@@ -455,16 +332,43 @@ void miner_thread()
 
         auto stop_time = std::chrono::steady_clock::now();
         ++totalcount;
-        blocks_duration += stop_time - start_time;
+        blocks_duration_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(stop_time - start_time).count();
         logStatistics();
     }
 }
 
 void startThreads()
 {
+    // Подготовка строки поиска выполняется однократно до запуска потоков:
+    // конкурентная правка conf.str из потоков была бы гонкой данных
+    if (conf.mode == 5)
+        conf.str = pickupStringForMeshname(conf.str);
+
+    if (conf.mode == 7)
+    {
+        const std::string oldString = conf.str;
+        const bool edited = subnetCheck();
+        Address raw {};
+        const bool result = convertStrToRaw(conf.str, raw);
+        if (!result)
+        {
+            error(-505);
+            std::cerr << " String [" << oldString << "] is not convertible to IPv6 address" << std::endl;
+            std::exit(-505);
+        }
+        if (edited || conf.str != getAddress(raw))
+        {
+            std::cerr << " WARNING: Your string [" << oldString << "] converted to IP [" <<
+                getAddress(raw) << "]" << std::endl << std::endl;
+        }
+        conf.str = getAddress(raw); // каноничная форма для майнинг-потоков
+    }
+
+    std::vector<std::thread> threads;
+    threads.reserve(conf.proc);
     for (unsigned int i = 0; i < conf.proc; ++i)
     {
-        std::thread * thread = new std::thread(
+        threads.emplace_back(
             conf.mode == 0 ? miner_thread<0> :
             conf.mode == 1 ? miner_thread<1> :
             conf.mode == 2 ? miner_thread<2> :
@@ -474,9 +378,9 @@ void startThreads()
             conf.mode == 6 ? miner_thread<6> :
             miner_thread<7>
         );
-        if (i+1 < conf.proc) thread->detach();
-        else thread->join();
     }
+    for (auto& thread : threads)
+        thread.join();
 }
 
 void error(int code)
@@ -534,6 +438,12 @@ void without()
 
 int main(int argc, char *argv[])
 {
+    if (!initSodium())
+    {
+        std::cerr << " FATAL: libsodium initialization failed" << std::endl;
+        return 1;
+    }
+
     if(argc >= 2)
     {
         std::string p1;
@@ -547,15 +457,24 @@ int main(int argc, char *argv[])
             return 0;
         } else if (p1 == "--tomesh" || p1 == "-tm") { // преобразование IP -> Meshname
             if (argc >= 3) {
-                Address rawAddr;
-                convertStrToRaw(argv[2], rawAddr);
-                std::string base32 = getBase32(rawAddr);
-                std::cout << std::endl << pickupMeshnameForOutput(base32) << std::endl;
+                Address rawAddr {};
+                if (!convertStrToRaw(argv[2], rawAddr)) {
+                    error(-503);
+                    std::cerr << " \"" << argv[2] << "\" is not a valid IPv6 address" << std::endl;
+                    return -503;
+                }
+                std::cout << std::endl << pickupMeshnameForOutput(getBase32(rawAddr)) << std::endl;
                 return 0;
             } else { error(-501); return -501; }
         } else if (p1 == "--toip" || p1 == "-ti") { // преобразование Meshname -> IP
             if (argc >= 3) {
-                std::cout << std::endl << decodeMeshToIP(argv[2]) << std::endl;
+                const std::string ip = decodeMeshToIP(argv[2]);
+                if (ip.empty()) {
+                    error(-504);
+                    std::cerr << " \"" << argv[2] << "\" is not a valid meshname domain" << std::endl;
+                    return -504;
+                }
+                std::cout << std::endl << ip << std::endl;
                 return 0;
             } else { error(-502); return -502; }
 
@@ -576,15 +495,33 @@ int main(int argc, char *argv[])
 
                     int res2 = parameters(conf, std::string( std::string(argv[i-1]) + " " + std::string(argv[i])) );
                     if (res2 != 0) { // Значение передано, но является некорректным
-                        error(res);
+                        error(res2);
                         std::cerr << " Wrong value \"" << argv[i] <<"\" for parameter \"" << argv[i-1] << "\"" << std::endl;
-                        return res;
+                        return res2;
                     }
+                }
+                else if (res != 0) { // Неизвестный параметр
+                    error(res);
+                    std::cerr << " Unknown parameter \"" << argv[i] << "\"" << std::endl;
+                    return res;
                 }
             }
         }
     }
     else { without(); std::this_thread::sleep_for(std::chrono::seconds(1)); }
+
+    if (conf.mode == 3 || conf.mode == 4 || conf.mode == 6)
+    {
+        // Регулярное выражение валидируется до запуска потоков: исключение
+        // в майнинг-потоке привело бы к std::terminate
+        try {
+            std::regex test(conf.str, std::regex_constants::egrep | std::regex_constants::icase);
+        } catch (const std::regex_error&) {
+            error(-506);
+            std::cerr << " Invalid regular expression: \"" << conf.str << "\"" << std::endl;
+            return -506;
+        }
+    }
 
     intro();
     displayConfig();
