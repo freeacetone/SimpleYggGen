@@ -3,7 +3,7 @@
  * Используется консольной (src) и графической (src-qt) версиями.
  *
  * developers: Vort, acetone, R4SAS, lialh4, filarius, orignal
- * developers team, 2021 (c) GPLv3
+ * developers team, 2021-2026 (c) GPLv3
  *
  */
 

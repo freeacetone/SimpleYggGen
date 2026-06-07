@@ -1,6 +1,6 @@
 /*
  * developers of GUI version: acetone, Vort
- * developers team, 2021 (c) GPLv3
+ * developers team, 2021-2026 (c) GPLv3
  *
  */
 
@@ -13,7 +13,7 @@
 #include <QString>
 #include <QIcon>
 
-const QString PRODUCT_VERSION = SYG_VERSION;
+const QString PRODUCT_VERSION = SYG_VERSION_FULL;
 
 int main(int argc, char *argv[])
 {

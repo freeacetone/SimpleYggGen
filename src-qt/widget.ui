@@ -743,7 +743,7 @@ You can make the developer feel good by donating some Monero for a fun time. </s
         </font>
        </property>
        <property name="text">
-        <string>GPLv3 (c) acetone, 2021-2023</string>
+        <string>GPLv3 (c) acetone, 2021-2026</string>
        </property>
       </widget>
      </item>
@@ -761,7 +761,7 @@ You can make the developer feel good by donating some Monero for a fun time. </s
       </spacer>
      </item>
      <item>
-      <widget class="QLabel" name="notabugLink">
+      <widget class="QLabel" name="githubLink">
        <property name="font">
         <font>
          <family>PT Mono</family>
@@ -769,7 +769,7 @@ You can make the developer feel good by donating some Monero for a fun time. </s
         </font>
        </property>
        <property name="text">
-        <string>&lt;a href=&quot;https://notabug.org/acetone/SimpleYggGen-CPP&quot;&gt;NotABug.org/acetone/SimpleYggGen-CPP&lt;/a&gt;</string>
+        <string>&lt;a href=&quot;https://github.com/freeacetone/SimpleYggGen&quot;&gt;GitHub.com/freeacetone/SimpleYggGen&lt;/a&gt;</string>
        </property>
        <property name="alignment">
         <set>Qt::AlignCenter</set>

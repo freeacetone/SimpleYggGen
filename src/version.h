@@ -7,6 +7,8 @@
 #define VERSION_H
 
 #define SYG_VERSION       "5.3"
+#define SYG_CODENAME      "reborn"
+#define SYG_VERSION_FULL  SYG_VERSION "-" SYG_CODENAME
 #define SYG_VERSION_MAJOR 5
 #define SYG_VERSION_MINOR 3
 #define SYG_VERSION_PATCH 0

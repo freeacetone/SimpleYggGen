@@ -1,4 +1,4 @@
-### SimpleYggGen-CPP [![Download SimpleYggGen-CPP](https://img.shields.io/sourceforge/dt/simpleygggen.svg)](https://sourceforge.net/projects/simpleygggen/files/latest/download)
+### SimpleYggGen [![Download](https://img.shields.io/github/v/release/freeacetone/SimpleYggGen)](https://github.com/freeacetone/SimpleYggGen/releases/latest)
 ```
 ILITA IRC:
 Yggdrasil    324:71e:281a:9ed3::41    6667
@@ -17,8 +17,8 @@ sudo apt-get install cmake git g++ libsodium-dev
 - Клонируйте данный репозиторий:
 
 ```bash
-git clone https://notabug.org/acetone/SimpleYggGen-CPP.git
-cd ./SimpleYggGen-CPP
+git clone https://github.com/freeacetone/SimpleYggGen.git
+cd ./SimpleYggGen
 ```
 
 - Скомпилируйте приложение:
@@ -43,8 +43,8 @@ pacman -S make git mingw-w64-x86_64-gcc mingw-w64-x86_64-libsodium mingw-w64-x86
 - Клонируйте данный репозиторий:
 
 ```bash
-git clone https://notabug.org/acetone/SimpleYggGen-CPP.git
-cd ./SimpleYggGen-CPP
+git clone https://github.com/freeacetone/SimpleYggGen.git
+cd ./SimpleYggGen
 ```
 
 - Скомпилируйте приложение:
@@ -71,8 +71,8 @@ sudo apt-get install cmake git g++ libsodium-dev
 - Clone this repository:
 
 ```bash
-git clone https://notabug.org/acetone/SimpleYggGen-CPP.git
-cd ./SimpleYggGen-CPP
+git clone https://github.com/freeacetone/SimpleYggGen.git
+cd ./SimpleYggGen
 ```
 
 - Compile application:
@@ -97,8 +97,8 @@ pacman -S make git mingw-w64-x86_64-gcc mingw-w64-x86_64-libsodium mingw-w64-x86
 - Clone this repository:
 
 ```bash
-git clone https://notabug.org/acetone/SimpleYggGen-CPP.git
-cd ./SimpleYggGen-CPP
+git clone https://github.com/freeacetone/SimpleYggGen.git
+cd ./SimpleYggGen
 ```
 
 - Compile application:

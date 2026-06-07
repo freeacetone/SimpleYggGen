@@ -24,10 +24,10 @@ BEGIN
             VALUE "CompanyName", "acetone"
             VALUE "FileDescription", "Simple Yggdrasil address miner"
             VALUE "FileVersion", SYG_VERSION
-            VALUE "LegalCopyright", "(c) GPLv3"
+            VALUE "LegalCopyright", "(c) 2021-2026 GPLv3"
             VALUE "OriginalFilename", "sygcpp"
             VALUE "ProductName", "SimpleYggGen"
-            VALUE "ProductVersion", SYG_VERSION
+            VALUE "ProductVersion", SYG_VERSION_FULL
         END
     END
     BLOCK "VarFileInfo"

@@ -2,7 +2,7 @@
  * Address miner for Yggdrasil Network 0.4.x and higher.
  *
  * developers: Vort, acetone, R4SAS, lialh4, filarius, orignal
- * developers team, 2021 (c) GPLv3
+ * developers team, 2021-2026 (c) GPLv3
  *
  */
 
@@ -25,20 +25,23 @@ static option conf;
 
 void intro()
 {
-    // строка версии центрируется, чтобы рамка не разъезжалась при смене version.h
-    const std::string title = "[    SimpleYggGen C++  " SYG_VERSION "    ]";
-    const size_t width = 74; // внутренняя ширина рамки
-    const size_t left = (width - title.size()) / 2;
-    const size_t right = width - title.size() - left;
+    // строки рамки центрируются программно, чтобы она не разъезжалась при правках
+    const auto centered = [](std::string text)
+    {
+        const size_t width = 74; // внутренняя ширина рамки
+        if ((width - text.size()) % 2) text += ' ';
+        const std::string pad((width - text.size()) / 2, ' ');
+        return " |" + pad + text + pad + "| \n";
+    };
 
-    std::cout << std::endl <<
- " +--------------------------------------------------------------------------+ \n"
- " |" << std::string(left, ' ') << title << std::string(right, ' ') << "| \n"
- " |                   EdDSA public key -> IPv6 -> Meshname                   | \n"
- " |                   notabug.org/acetone/SimpleYggGen-CPP                   | \n"
- " |                                                                          | \n"
- " |                              GPLv3 (c) 2021                              | \n"
- " +--------------------------------------------------------------------------+ "
+    std::cout << std::endl
+ << " +--------------------------------------------------------------------------+ \n"
+ << centered("[    SimpleYggGen C++  " SYG_VERSION_FULL "    ]")
+ << centered("EdDSA public key -> IPv6 -> Meshname")
+ << centered("github.com/freeacetone/SimpleYggGen")
+ << centered("")
+ << centered("GPLv3 (c) 2021-2026")
+ << " +--------------------------------------------------------------------------+ "
  << std::endl;
 }
 
