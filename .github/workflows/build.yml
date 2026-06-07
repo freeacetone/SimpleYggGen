@@ -56,48 +56,6 @@ jobs:
           name: debian
           path: sygcpp-*-debian-amd64.tar.gz
 
-  fedora:
-    name: Fedora (CLI + GUI)
-    runs-on: ubuntu-latest
-    container: fedora:latest
-    steps:
-      - name: Install dependencies
-        run: |
-          dnf install -y cmake gcc-c++ git libsodium-devel make qt6-qtbase-devel
-
-      - uses: actions/checkout@v4
-
-      - name: Build CLI
-        run: |
-          cmake -B build .
-          make -C build -j"$(nproc)"
-
-      - name: Build GUI
-        run: |
-          mkdir build-gui
-          cd build-gui
-          qmake6 ../src-qt/syg-cpp.pro
-          make -j"$(nproc)"
-
-      - name: Smoke test
-        run: |
-          ./build/src/sygcpp --version
-          test "$(./build/src/sygcpp --tomesh 200:1e:234f:2a20:c39e:a136:5ed2:af82 | tr -d '[:space:]')" \
-            = "aiaaahrdj4vcbq46ue3f5uvpqi.meship"
-
-      - name: Package
-        run: |
-          mkdir -p dist/sygcpp
-          cp build/src/sygcpp dist/sygcpp/sygcpp
-          cp build-gui/syg-cpp dist/sygcpp/syg-cpp-gui
-          cp LICENSE dist/sygcpp/
-          tar -C dist -czf "sygcpp-${GITHUB_REF_NAME}-fedora-amd64.tar.gz" sygcpp
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: fedora
-          path: sygcpp-*-fedora-amd64.tar.gz
-
   windows:
     name: Windows (CLI + GUI, MSYS2/MinGW64)
     runs-on: windows-latest
@@ -161,7 +119,7 @@ jobs:
 
   release:
     name: Publish release
-    needs: [debian, fedora, windows]
+    needs: [debian, windows]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
