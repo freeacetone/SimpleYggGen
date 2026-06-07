@@ -91,24 +91,24 @@ void Miner::initializeLogFile(Widget* window)
     output.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
 }
 
+// Вызывается только потоком, чей инкремент m_totalcount дал кратное m_countsize:
+// перечитывание общего счетчика здесь приводило бы к двойному входу и
+// делению на почти нулевую длительность (мусорные kH/s)
 void Miner::logStatistics()
 {
-    if (m_totalcount % m_countsize == 0)
-    {
-        auto timedays = (std::time(NULL) - m_sygstartedin) / 86400;
-        auto timehours = ((std::time(NULL) - m_sygstartedin) - (timedays * 86400)) / 3600;
-        auto timeminutes = ((std::time(NULL) - m_sygstartedin) - (timedays * 86400) - (timehours * 3600)) / 60;
-        auto timeseconds = (std::time(NULL) - m_sygstartedin) - (timedays * 86400) - (timehours * 3600) - (timeminutes * 60);
+    auto timedays = (std::time(NULL) - m_sygstartedin) / 86400;
+    auto timehours = ((std::time(NULL) - m_sygstartedin) - (timedays * 86400)) / 3600;
+    auto timeminutes = ((std::time(NULL) - m_sygstartedin) - (timedays * 86400) - (timehours * 3600)) / 60;
+    auto timeseconds = (std::time(NULL) - m_sygstartedin) - (timedays * 86400) - (timehours * 3600) - (timeminutes * 60);
 
-        const double block_ms = m_blocksDurationNs.exchange(0) / 1.0e6;
-        const quint64 khs = block_ms > 0 ? window->conf.proc * m_countsize / block_ms : 0;
+    const double block_ms = m_blocksDurationNs.exchange(0) / 1.0e6;
+    const quint64 khs = block_ms > 0 ? window->conf.proc * m_countsize / block_ms : 0;
 
-        std::stringstream ss;
-        ss << std::setw(2) << std::setfill('0') << timedays << ":" << std::setw(2) << std::setfill('0')
-           << timehours << ":" << std::setw(2) << timeminutes << ":" << std::setw(2) << timeseconds;
+    std::stringstream ss;
+    ss << std::setw(2) << std::setfill('0') << timedays << ":" << std::setw(2) << std::setfill('0')
+       << timehours << ":" << std::setw(2) << timeminutes << ":" << std::setw(2) << timeseconds;
 
-        emit setLog(QString::fromStdString(ss.str()), m_totalcount, m_countfortune, khs);
-    }
+    emit setLog(QString::fromStdString(ss.str()), m_totalcount, m_countfortune, khs);
 }
 
 void Miner::logKeys(const Address& raw, const KeysBox& keys)
@@ -233,9 +233,10 @@ void Miner::run()
         }
 
         auto stop_time = std::chrono::steady_clock::now();
-        ++m_totalcount;
+        const quint64 count = ++m_totalcount;
         m_blocksDurationNs += std::chrono::duration_cast<std::chrono::nanoseconds>(stop_time - start_time).count();
-        logStatistics();
+        if (count % static_cast<quint64>(m_countsize) == 0)
+            logStatistics();
     }
 }
 
@@ -246,6 +247,5 @@ void Miner::processFortuneKey(const KeysBox& keys)
     Address rawAddr;
     getRawAddress(ones, invKey, rawAddr);
     ++m_countfortune;
-    logKeys(rawAddr, keys);
-    logStatistics();
+    logKeys(rawAddr, keys); // счетчик Found обновится со следующим интервалом статистики
 }

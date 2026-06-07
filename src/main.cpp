@@ -140,29 +140,29 @@ void testOutput()
 #endif
 }
 
+// Вызывается только потоком, чей инкремент totalcount дал кратное countsize:
+// перечитывание общего счетчика здесь приводило бы к двойному входу и
+// делению на почти нулевую длительность (мусорные kH/s)
 void logStatistics()
 {
-    if (totalcount % countsize == 0)
-    {
-        mtx.lock();
-        auto timedays = (std::time(NULL) - sygstartedin) / 86400;
-        auto timehours = ((std::time(NULL) - sygstartedin) - (timedays * 86400)) / 3600;
-        auto timeminutes = ((std::time(NULL) - sygstartedin) - (timedays * 86400) - (timehours * 3600)) / 60;
-        auto timeseconds = (std::time(NULL) - sygstartedin) - (timedays * 86400) - (timehours * 3600) - (timeminutes * 60);
+    mtx.lock();
+    auto timedays = (std::time(NULL) - sygstartedin) / 86400;
+    auto timehours = ((std::time(NULL) - sygstartedin) - (timedays * 86400)) / 3600;
+    auto timeminutes = ((std::time(NULL) - sygstartedin) - (timedays * 86400) - (timehours * 3600)) / 60;
+    auto timeseconds = (std::time(NULL) - sygstartedin) - (timedays * 86400) - (timehours * 3600) - (timeminutes * 60);
 
-        const double block_ms = blocks_duration_ns.exchange(0) / 1.0e6;
-        const uint64_t khs = block_ms > 0 ? conf.proc * countsize / block_ms : 0;
-        const uint64_t total = totalcount;
-        const uint64_t found = countfortune;
-        std::cout <<
-            " kH/s: [" << std::setw(7) << std::setfill('_') << khs <<
-            "] Total: [" << std::setw(19) << total <<
-            "] Found: [" << std::setw(3) << found <<
-            "] Time: [" << timedays << ":" << std::setw(2) << std::setfill('0') <<
-            timehours << ":" << std::setw(2) << timeminutes << ":" << std::setw(2) << timeseconds << "]" << std::endl;
-        newline = true;
-        mtx.unlock();
-    }
+    const double block_ms = blocks_duration_ns.exchange(0) / 1.0e6;
+    const uint64_t khs = block_ms > 0 ? conf.proc * countsize / block_ms : 0;
+    const uint64_t total = totalcount;
+    const uint64_t found = countfortune;
+    std::cout <<
+        " kH/s: [" << std::setw(7) << std::setfill('_') << khs <<
+        "] Total: [" << std::setw(19) << total <<
+        "] Found: [" << std::setw(3) << found <<
+        "] Time: [" << timedays << ":" << std::setw(2) << std::setfill('0') <<
+        timehours << ":" << std::setw(2) << timeminutes << ":" << std::setw(2) << timeseconds << "]" << std::endl;
+    newline = true;
+    mtx.unlock();
 }
 
 void logKeys(const Address& raw, const KeysBox& keys)
@@ -334,9 +334,10 @@ void miner_thread()
         }
 
         auto stop_time = std::chrono::steady_clock::now();
-        ++totalcount;
+        const uint64_t count = ++totalcount;
         blocks_duration_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(stop_time - start_time).count();
-        logStatistics();
+        if (count % static_cast<uint64_t>(countsize) == 0)
+            logStatistics();
     }
 }
 
