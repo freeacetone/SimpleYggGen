@@ -1,0 +1,176 @@
+name: Release build
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch: # ручной запуск для проверки без тега
+
+permissions:
+  contents: write
+
+jobs:
+  debian:
+    name: Debian (CLI + GUI)
+    runs-on: ubuntu-latest
+    container: debian:stable
+    steps:
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates cmake g++ git libsodium-dev make qt6-base-dev
+
+      - uses: actions/checkout@v4
+
+      - name: Build CLI
+        run: |
+          cmake -B build .
+          make -C build -j"$(nproc)"
+
+      - name: Build GUI
+        run: |
+          mkdir build-gui
+          cd build-gui
+          qmake6 ../src-qt/syg-cpp.pro
+          make -j"$(nproc)"
+
+      - name: Smoke test
+        run: |
+          ./build/src/sygcpp --version
+          test "$(./build/src/sygcpp --tomesh 200:1e:234f:2a20:c39e:a136:5ed2:af82 | tr -d '[:space:]')" \
+            = "aiaaahrdj4vcbq46ue3f5uvpqi.meship"
+          test "$(./build/src/sygcpp --toip aiaaahrdj4vcbq46ue3f5uvpqi.meship | tr -d '[:space:]')" \
+            = "200:1e:234f:2a20:c39e:a136:5ed2:af82"
+
+      - name: Package # tar сохраняет права на исполнение, в отличие от artifact-загрузки
+        run: |
+          mkdir -p dist/sygcpp
+          cp build/src/sygcpp dist/sygcpp/sygcpp
+          cp build-gui/syg-cpp dist/sygcpp/syg-cpp-gui
+          cp LICENSE dist/sygcpp/
+          tar -C dist -czf "sygcpp-${GITHUB_REF_NAME}-debian-amd64.tar.gz" sygcpp
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: debian
+          path: sygcpp-*-debian-amd64.tar.gz
+
+  fedora:
+    name: Fedora (CLI + GUI)
+    runs-on: ubuntu-latest
+    container: fedora:latest
+    steps:
+      - name: Install dependencies
+        run: |
+          dnf install -y cmake gcc-c++ git libsodium-devel make qt6-qtbase-devel
+
+      - uses: actions/checkout@v4
+
+      - name: Build CLI
+        run: |
+          cmake -B build .
+          make -C build -j"$(nproc)"
+
+      - name: Build GUI
+        run: |
+          mkdir build-gui
+          cd build-gui
+          qmake6 ../src-qt/syg-cpp.pro
+          make -j"$(nproc)"
+
+      - name: Smoke test
+        run: |
+          ./build/src/sygcpp --version
+          test "$(./build/src/sygcpp --tomesh 200:1e:234f:2a20:c39e:a136:5ed2:af82 | tr -d '[:space:]')" \
+            = "aiaaahrdj4vcbq46ue3f5uvpqi.meship"
+
+      - name: Package
+        run: |
+          mkdir -p dist/sygcpp
+          cp build/src/sygcpp dist/sygcpp/sygcpp
+          cp build-gui/syg-cpp dist/sygcpp/syg-cpp-gui
+          cp LICENSE dist/sygcpp/
+          tar -C dist -czf "sygcpp-${GITHUB_REF_NAME}-fedora-amd64.tar.gz" sygcpp
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fedora
+          path: sygcpp-*-fedora-amd64.tar.gz
+
+  windows:
+    name: Windows (CLI + GUI, MSYS2/MinGW64)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: 'msys2 {0}'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            make
+            zip
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-libsodium
+            mingw-w64-x86_64-qt6-base
+
+      - name: Build CLI (static)
+        run: |
+          cmake -G Ninja -B build .
+          cmake --build build
+
+      - name: Build GUI
+        run: |
+          mkdir build-gui
+          cd build-gui
+          qmake6 ../src-qt/syg-cpp.pro CONFIG+=release
+          make -j"$(nproc)"
+
+      - name: Smoke test
+        run: |
+          ./build/src/sygcpp.exe --version
+          test "$(./build/src/sygcpp.exe --tomesh 200:1e:234f:2a20:c39e:a136:5ed2:af82 | tr -d '[:space:]')" \
+            = "aiaaahrdj4vcbq46ue3f5uvpqi.meship"
+
+      - name: Package
+        run: |
+          cp build/src/sygcpp.exe "sygcpp-${GITHUB_REF_NAME}-win64.exe"
+
+          # GUI: exe + DLL MinGW-рантайма и libsodium (ldd) + DLL и плагины Qt (windeployqt6)
+          mkdir syg-cpp-gui
+          cp "$(find build-gui -name 'syg-cpp.exe' | head -1)" syg-cpp-gui/
+          for dll in $(ldd syg-cpp-gui/syg-cpp.exe | grep -i '/mingw64/' | awk '{print $3}'); do
+            cp "$dll" syg-cpp-gui/
+          done
+          windeployqt6 syg-cpp-gui/syg-cpp.exe
+          cp LICENSE syg-cpp-gui/
+          zip -r "syg-cpp-gui-${GITHUB_REF_NAME}-win64.zip" syg-cpp-gui
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            sygcpp-*-win64.exe
+            syg-cpp-gui-*-win64.zip
+
+  release:
+    name: Publish release
+    needs: [debian, fedora, windows]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
