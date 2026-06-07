@@ -36,7 +36,7 @@ void intro()
 
     std::cout << std::endl
  << " +--------------------------------------------------------------------------+ \n"
- << centered("[    SimpleYggGen C++  " SYG_VERSION_FULL "    ]")
+ << centered("[   SimpleYggGen C++  " SYG_VERSION_FULL "   ]")
  << centered("EdDSA public key -> IPv6 -> Meshname")
  << centered("github.com/freeacetone/SimpleYggGen")
  << centered("")
